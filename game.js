@@ -11,13 +11,14 @@ const GAME_STATE = {
 
 // Bullet Class
 class Bullet {
-    constructor(x, y, speed, isPlayerBullet = true) {
+    constructor(x, y, speed, isPlayerBullet = true, damage = 1) {
         this.x = x;
         this.y = y;
         this.width = 4;
         this.height = 10;
         this.speed = speed;
         this.isPlayerBullet = isPlayerBullet;
+        this.damage = damage;
     }
 
     update() {
@@ -25,8 +26,17 @@ class Bullet {
     }
 
     draw() {
-        ctx.fillStyle = this.isPlayerBullet ? '#00ff00' : '#ff0000';
-        ctx.fillRect(this.x, this.y, this.width, this.height);
+        if (this.isPlayerBullet && this.damage > 1) {
+            // Power-up bullets are larger and brighter
+            ctx.fillStyle = '#00ffff';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#00ffff';
+            ctx.fillRect(this.x - 1, this.y, this.width + 2, this.height);
+            ctx.shadowBlur = 0;
+        } else {
+            ctx.fillStyle = this.isPlayerBullet ? '#00ff00' : '#ff0000';
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+        }
     }
 
     isOffScreen() {
@@ -45,6 +55,7 @@ class Player {
         this.bullets = [];
         this.shootCooldown = 0;
         this.maxCooldown = 15;
+        this.powerUpActive = false;
     }
 
     update(keys) {
@@ -76,23 +87,34 @@ class Player {
     }
 
     shoot() {
+        const damage = this.powerUpActive ? 3 : 1; // Power-up bullets do 3x damage
         this.bullets.push(new Bullet(
             this.x + this.width / 2 - 2,
             this.y,
             -8,
-            true
+            true,
+            damage
         ));
     }
 
     draw() {
         // Draw player ship (triangle shape)
-        ctx.fillStyle = '#00ff00';
+        if (this.powerUpActive) {
+            // Power-up glow effect
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#00ffff';
+            ctx.fillStyle = '#00ffff';
+        } else {
+            ctx.fillStyle = '#00ff00';
+            ctx.shadowBlur = 0;
+        }
         ctx.beginPath();
         ctx.moveTo(this.x + this.width / 2, this.y);
         ctx.lineTo(this.x, this.y + this.height);
         ctx.lineTo(this.x + this.width, this.y + this.height);
         ctx.closePath();
         ctx.fill();
+        ctx.shadowBlur = 0;
 
         // Draw bullets
         this.bullets.forEach(bullet => bullet.draw());
@@ -108,6 +130,58 @@ class Player {
     }
 }
 
+// Explosion Class
+class Explosion {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.particles = [];
+        this.lifetime = 20;
+        this.age = 0;
+        
+        // Create particles
+        const particleCount = 15;
+        for (let i = 0; i < particleCount; i++) {
+            const angle = (Math.PI * 2 * i) / particleCount;
+            const speed = 2 + Math.random() * 3;
+            this.particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                size: 2 + Math.random() * 3,
+                color: `hsl(${Math.random() * 60 + 10}, 100%, ${50 + Math.random() * 50}%)`
+            });
+        }
+    }
+
+    update() {
+        this.age++;
+        this.particles.forEach(particle => {
+            particle.x += particle.vx;
+            particle.y += particle.vy;
+            particle.vy += 0.2; // Gravity
+            particle.size *= 0.95; // Shrink
+        });
+    }
+
+    draw() {
+        const alpha = 1 - (this.age / this.lifetime);
+        this.particles.forEach(particle => {
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = particle.color;
+            ctx.beginPath();
+            ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.globalAlpha = 1;
+    }
+
+    isFinished() {
+        return this.age >= this.lifetime;
+    }
+}
+
 // Enemy Class
 class Enemy {
     constructor(x, y, row) {
@@ -118,6 +192,8 @@ class Enemy {
         this.row = row;
         this.speed = 1;
         this.direction = 1; // 1 for right, -1 for left
+        this.health = 1;
+        this.maxHealth = 1;
     }
 
     update() {
@@ -157,10 +233,12 @@ class Game {
         this.player = new Player();
         this.enemies = [];
         this.enemyBullets = [];
+        this.explosions = [];
         this.score = 0;
         this.keys = {};
         this.enemyShootTimer = 0;
         this.enemyShootInterval = 60;
+        this.powerUpActivated = false;
         this.setupEventListeners();
         this.initEnemies();
     }
@@ -223,6 +301,8 @@ class Game {
         this.score = 0;
         this.player = new Player();
         this.enemyBullets = [];
+        this.explosions = [];
+        this.powerUpActivated = false;
         this.initEnemies();
         document.getElementById('gameOverScreen').classList.add('hidden');
         document.getElementById('score').textContent = '0';
@@ -236,15 +316,35 @@ class Game {
     }
 
     checkCollisions() {
+        // Check for power-up activation
+        if (this.score > 100 && !this.powerUpActivated) {
+            this.powerUpActivated = true;
+            this.player.powerUpActive = true;
+        }
+
         // Player bullets hitting enemies
         this.player.bullets.forEach((bullet, bulletIndex) => {
             this.enemies.forEach((enemy, enemyIndex) => {
                 if (this.isColliding(bullet, enemy.getHitBox())) {
-                    // Remove bullet and enemy
+                    // Apply damage
+                    enemy.health -= bullet.damage;
+                    
+                    // Remove bullet
                     this.player.bullets.splice(bulletIndex, 1);
-                    this.enemies.splice(enemyIndex, 1);
-                    this.score += 10;
-                    document.getElementById('score').textContent = this.score;
+                    
+                    // If enemy is destroyed
+                    if (enemy.health <= 0) {
+                        // Create explosion at enemy position
+                        this.explosions.push(new Explosion(
+                            enemy.x + enemy.width / 2,
+                            enemy.y + enemy.height / 2
+                        ));
+                        
+                        // Remove enemy
+                        this.enemies.splice(enemyIndex, 1);
+                        this.score += 10;
+                        document.getElementById('score').textContent = this.score;
+                    }
                 }
             });
         });
@@ -326,6 +426,14 @@ class Game {
             }
         });
 
+        // Update explosions
+        this.explosions.forEach((explosion, index) => {
+            explosion.update();
+            if (explosion.isFinished()) {
+                this.explosions.splice(index, 1);
+            }
+        });
+
         // Check collisions
         this.checkCollisions();
 
@@ -365,6 +473,9 @@ class Game {
 
             // Draw enemy bullets
             this.enemyBullets.forEach(bullet => bullet.draw());
+
+            // Draw explosions
+            this.explosions.forEach(explosion => explosion.draw());
         }
     }
 
