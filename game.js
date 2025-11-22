@@ -9,6 +9,92 @@ const GAME_STATE = {
     GAME_OVER: 'gameOver'
 };
 
+// Sound Manager Class
+class SoundManager {
+    constructor() {
+        this.audioContext = null;
+        this.masterVolume = 0.3;
+        this.init();
+    }
+
+    init() {
+        try {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+            console.warn('Web Audio API not supported');
+        }
+    }
+
+    playTone(frequency, duration, type = 'sine', volume = 0.3) {
+        if (!this.audioContext) return;
+
+        const oscillator = this.audioContext.createOscillator();
+        const gainNode = this.audioContext.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(this.audioContext.destination);
+
+        oscillator.frequency.value = frequency;
+        oscillator.type = type;
+
+        gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(volume * this.masterVolume, this.audioContext.currentTime + 0.01);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + duration);
+
+        oscillator.start(this.audioContext.currentTime);
+        oscillator.stop(this.audioContext.currentTime + duration);
+    }
+
+    playShoot(isPowerUp = false) {
+        if (isPowerUp) {
+            // Power-up shoot sound - higher pitch, more powerful
+            this.playTone(800, 0.1, 'square', 0.4);
+            this.playTone(1000, 0.1, 'square', 0.3);
+        } else {
+            // Normal shoot sound
+            this.playTone(600, 0.08, 'square', 0.3);
+        }
+    }
+
+    playEnemyShoot() {
+        // Lower pitch for enemy shots
+        this.playTone(300, 0.1, 'sawtooth', 0.2);
+    }
+
+    playExplosion() {
+        // Explosion sound - noise-like with multiple frequencies
+        const frequencies = [100, 150, 200, 80];
+        frequencies.forEach((freq, i) => {
+            setTimeout(() => {
+                this.playTone(freq, 0.15, 'sawtooth', 0.25 / (i + 1));
+            }, i * 20);
+        });
+    }
+
+    playPowerUp() {
+        // Power-up activation sound - ascending tones
+        const tones = [400, 600, 800, 1000];
+        tones.forEach((freq, i) => {
+            setTimeout(() => {
+                this.playTone(freq, 0.2, 'sine', 0.3);
+            }, i * 100);
+        });
+    }
+
+    playGameOver() {
+        // Game over sound - descending sad tones
+        const tones = [400, 350, 300, 250];
+        tones.forEach((freq, i) => {
+            setTimeout(() => {
+                this.playTone(freq, 0.3, 'sine', 0.4);
+            }, i * 150);
+        });
+    }
+}
+
+// Create global sound manager
+const soundManager = new SoundManager();
+
 // Bullet Class
 class Bullet {
     constructor(x, y, speed, isPlayerBullet = true, damage = 1) {
@@ -95,6 +181,8 @@ class Player {
             true,
             damage
         ));
+        // Play shoot sound
+        soundManager.playShoot(this.powerUpActive);
     }
 
     draw() {
@@ -313,6 +401,8 @@ class Game {
         this.state = GAME_STATE.GAME_OVER;
         document.getElementById('finalScore').textContent = this.score;
         document.getElementById('gameOverScreen').classList.remove('hidden');
+        // Play game over sound
+        soundManager.playGameOver();
     }
 
     checkCollisions() {
@@ -320,6 +410,8 @@ class Game {
         if (this.score > 100 && !this.powerUpActivated) {
             this.powerUpActivated = true;
             this.player.powerUpActive = true;
+            // Play power-up sound
+            soundManager.playPowerUp();
         }
 
         // Player bullets hitting enemies
@@ -339,6 +431,9 @@ class Game {
                             enemy.x + enemy.width / 2,
                             enemy.y + enemy.height / 2
                         ));
+                        
+                        // Play explosion sound
+                        soundManager.playExplosion();
                         
                         // Remove enemy
                         this.enemies.splice(enemyIndex, 1);
@@ -402,6 +497,8 @@ class Game {
                 4,
                 false
             ));
+            // Play enemy shoot sound
+            soundManager.playEnemyShoot();
         }
     }
 
